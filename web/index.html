@@ -389,6 +389,9 @@ img.av{object-fit:cover}
 .lay-prev.crop .ph i{left:0;right:0;top:0;height:100%;transform:none}
 .lay-prev.track .ph i{left:0;right:0;top:0;height:100%;transform:none}
 .lay-prev.track .ph::after{content:"";position:absolute;left:9px;top:12px;width:10px;height:10px;border-radius:50%;background:var(--card);box-shadow:0 0 0 2px var(--frame)}
+.lay-prev.gameplay .ph i{left:0;right:0;top:0;height:100%;transform:none;background:linear-gradient(160deg,#4FA36B,#2F6B45)}
+.lay-prev.gameplay .ph::after{content:"";position:absolute;right:3px;top:3px;width:12px;height:8px;border-radius:2px;background:linear-gradient(135deg,#FFB27A,#FF8B33)}
+.stile:disabled{opacity:.4;cursor:default}
 .lay-prev.split .ph i{top:0;height:36%;transform:none;background:linear-gradient(135deg,var(--brand),var(--brand))}
 .lay-prev.split .ph::after{content:"";position:absolute;left:0;right:0;bottom:0;height:62%;background:linear-gradient(160deg,#4FA36B,#2F6B45)}
 .fxgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
@@ -1330,7 +1333,7 @@ async function openFeedback(kind = "bug", context = "") {
 }
 function updateHow() {
   const up = S.status?.update, d = $("#formdlg"); if (!up || d.open) return;
-  const ai = "Update this ShaydoxCut folder to the latest version from GitHub (git pull), keep my .env and data folder as they are, install any new requirements, and restart ShaydoxCut.";
+  const ai = "Update this ShaydoxCut folder to the latest version from GitHub (git pull), keep my .env and data folder as they are, install any new requirements, and restart ShaydoxCut. Read AGENTS.md first: if this folder's path is long or inside a temporary or assistant workspace, ask me before moving it to a short folder like C:\\shaydoxcut, and never delete anything without asking.";
   const cmd = (label, text) => `<h3>${label}</h3><div class="cmd"><code>${esc(text)}</code><button class="btn sm" type="button" data-act="copytext" data-t="${esc(text)}">${ic("copy")}Copy</button></div>`;
   d.innerHTML = `<form method="dialog" class="dlg upd"><h2>${up.restart ? "The new version is ready" : "A new version of ShaydoxCut is out"}</h2>
     <p class="help">${up.restart ? "The new files are already in the ShaydoxCut folder. <b>Close ShaydoxCut and start it again</b> to use them." : `You're on <b>${esc(up.current)}</b>. ${up.behind ? `${up.behind} update${up.behind === 1 ? " has" : "s have"} been added since.` : "Newer changes have been added since."}`} Your settings, keys and clips stay as they are.</p>
@@ -1492,7 +1495,9 @@ function drawAdd(variant) {
         <input id="o_prompt" maxlength="300" placeholder="Example: all the funny fails, or every time chat goes wild" aria-label="Moments to include">
       </div>
       <div class="opt-sec" id="sec-captions"><div class="opt-h">Captions</div>
-        ${styleStrip("o_style", c?.style ?? "bounce")}
+        <label class="opt-row" style="border-top:0;padding-top:0"><span class="oi">${ic("chat")}</span><span class="ol"><b>Generate captions</b><small>Word-by-word captions burned into the clip</small></span>
+          <input type="checkbox" class="tg" id="o_captions" data-caption-toggle ${c?.captions === false ? "" : "checked"}></label>
+        ${styleStrip("o_style", c?.style ?? "bounce", c?.captions === false)}
         <div class="opt-two"><label class="f">Caption language<select id="o_lang">${langOpts(c?.cap_lang || "")}</select></label>
           <div></div></div>
       </div>
@@ -1510,7 +1515,7 @@ function drawAdd(variant) {
     </div></div></form>`;
   drawAtt();
 }
-const LAYOUT_SHORT = {track:"Follow speaker", split:"Facecam + game", blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen"};
+const LAYOUT_SHORT = {track:"Follow speaker", split:"Facecam + game", gameplay:"Game + webcam", blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen"};
 const FX = [
   ["tight", "Cut dead air", "Takes out pauses and quiet bits", "sound", "scissors"],
   ["fillers", "Cut um and uh", "Removes filler sounds", "sound", "chat"],
@@ -1534,9 +1539,9 @@ function fxRows(attr, src, group) {
     return `<label class="opt-row"><span class="oi">${ic(i)}</span><span class="ol"><b>${l}</b><small>${h}</small>${note}</span><input type="checkbox" class="tg" ${attr}="${k}" ${fxVal(src, k) ? "checked" : ""}></label>`;
   }).join("");
 }
-function styleStrip(id, val) {
+function styleStrip(id, val, off = false) {
   return `<input type="hidden" id="${id}" value="${esc(val)}"><div class="strip" role="group" aria-label="Caption style">${Object.entries(S.status.styles).map(([k, l]) =>
-    `<button type="button" class="stile" data-seg="${id}" data-v="${esc(k)}" aria-pressed="${k === val}"><span class="sp"><img src="/api/preview/caption/${encodeURIComponent(k)}.png" alt="" loading="lazy"></span><span class="sl">${esc(l)}</span></button>`).join("")}</div>`;
+    `<button type="button" class="stile" data-seg="${id}" data-v="${esc(k)}" data-caption-style ${off ? "disabled" : ""} aria-pressed="${k === val}"><span class="sp"><img src="/api/preview/caption/${encodeURIComponent(k)}.png" alt="" loading="lazy"></span><span class="sl">${esc(l)}</span></button>`).join("")}</div>`;
 }
 function hookStrip(id, val) {
   return `<input type="hidden" id="${id}" value="${esc(val)}"><div class="strip hooks" role="group" aria-label="Hook style">${Object.entries(S.status.hook_styles || {}).map(([k, l]) =>
@@ -1576,9 +1581,10 @@ function stepper(id, label, val, min, max, step, unit) {
     <input id="${id}" type="number" min="${min}" max="${max}" step="${step}" value="${esc(val)}" aria-label="${esc(label)}">${unit ? `<i>${unit}</i>` : ""}
     <button type="button" data-step="${id}" data-d="1" aria-label="More">${ic("plus")}</button></div></div>`;
 }
-function choice(id, items, val) {
-  return `<input type="hidden" id="${id}" value="${esc(val)}"><div class="tiles3" role="group">${items.map(x =>
-    `<button type="button" class="tile-o" data-seg="${id}" data-v="${esc(x.v)}" aria-pressed="${String(x.v) === String(val)}"${x.title ? ` title="${esc(x.title)}"` : ""}>${x.prev}${esc(x.label)}</button>`).join("")}</div>`;
+function choice(id, items, val, disabled = false) {
+  const captions = id === "o_style";
+  return `<input type="hidden" id="${id}" value="${esc(val)}"><div class="tiles3" role="group"${captions ? ' aria-labelledby="o_style_label"' : ""}>${items.map(x =>
+    `<button type="button" class="tile-o" data-seg="${id}" data-v="${esc(x.v)}" aria-pressed="${String(x.v) === String(val)}"${captions ? " data-caption-style" : ""}${disabled ? " disabled" : ""}${x.title ? ` title="${esc(x.title)}"` : ""}>${x.prev}${esc(x.label)}</button>`).join("")}</div>`;
 }
 const closePicks = except => $$(".pick.open").forEach(p => { if (p !== except) { p.classList.remove("open"); p.querySelector(".pick-btn").setAttribute("aria-expanded", "false"); } });
 document.addEventListener("click", e => {
@@ -1593,7 +1599,7 @@ document.addEventListener("click", e => {
     p.querySelector("input[type=hidden]").dispatchEvent(new Event("change", {bubbles: true})); return; }
   if (!e.target.closest(".pick") || e.target.closest(".pick-new")) closePicks();
   const sg = e.target.closest("[data-seg]");
-  if (sg) { $("#" + sg.dataset.seg).value = sg.dataset.v;
+  if (sg && !sg.disabled) { $("#" + sg.dataset.seg).value = sg.dataset.v;
     sg.parentElement.querySelectorAll("[data-seg]").forEach(b => b.setAttribute("aria-pressed", String(b === sg))); return; }
   const st = e.target.closest("[data-step]");
   if (st) { const i = $("#" + st.dataset.step), s = Number(i.step) || 1, d = Number(st.dataset.d);
@@ -1612,6 +1618,7 @@ const targetCreator = () => creatorId() || $("#o_creator")?.value || "";
 function jobOptions() {
   const n = id => { const v = $(id).value; return v === "" ? null : Number(v); };
   const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality")};
+  if ($("#o_captions")) o.captions = $("#o_captions").checked;
   $$(".composer-opts [data-fx]").forEach(i => o[i.dataset.fx] = i.checked);
   if ($("#o_hook")) o.hook_style = $("#o_hook").value;
   if ($("#o_prompt")) o.prompt = $("#o_prompt").value.trim();
@@ -1744,9 +1751,9 @@ document.addEventListener("click", e => {
 
 // A big file goes in pieces (anything standing in front of the app refuses one huge request), two at a time,
 // and a piece that fails is simply sent again. The bar shows the whole file.
-async function sendBig(f, who) {
+async function sendBig(f, who, options) {
   const file = f.file;
-  const s = await send("/api/upload/start", {name: file.name, size: file.size, options: jobOptions(), creator: who});
+  const s = await send("/api/upload/start", {name: file.name, size: file.size, options, creator: who});
   const sent = new Array(s.parts).fill(0);
   const show = () => { f.pct = Math.min(99, Math.round(sent.reduce((a, b) => a + b, 0) / file.size * 100)); drawAtt(); };
   const put = i => new Promise((ok, fail) => {
@@ -1783,11 +1790,11 @@ async function sendBig(f, who) {
     throw e;
   }
 }
-function sendFile(f, who) {
-  if (S.status.upload_part_mb && f.file.size > S.status.upload_part_mb * 1048576) return sendBig(f, who);
+function sendFile(f, who, options) {
+  if (S.status.upload_part_mb && f.file.size > S.status.upload_part_mb * 1048576) return sendBig(f, who, options);
   return new Promise((ok, fail) => {
     const x = new XMLHttpRequest(), fd = new FormData();
-    fd.append("file", f.file); fd.append("options", JSON.stringify(jobOptions())); fd.append("creator", who);
+    fd.append("file", f.file); fd.append("options", JSON.stringify(options)); fd.append("creator", who);
     x.open("POST", "/api/upload");
     x.upload.onprogress = e => { if (e.lengthComputable) { f.pct = Math.round(e.loaded / e.total * 100); drawAtt(); } };
     x.onload = () => {
@@ -1826,7 +1833,7 @@ async function makeClips() {
   }
   for (const f of A.files) {
     f.state = "up"; f.pct = 0; drawAtt();
-    try { await sendFile(f, who); f.state = "done"; started++; }
+    try { await sendFile(f, who, opts); f.state = "done"; started++; }
     catch (e) { f.state = "error"; f.err = e.message; failed++; }
     drawAtt();
   }
@@ -2039,8 +2046,10 @@ function drawCreatorForm() {
         <label class="f span">Always clip the last 30 seconds when someone says<input data-k="trigger_words" value="${esc(c.trigger_words)}" placeholder="clip that, clip it"><small class="sub" style="font-weight:400">Separate phrases with commas. Matched on the transcript, so it needs no AI call.</small></label>
       </div></div>
     <div class="card"><h2>Clips</h2><p class="help">How this creator's clips look.</p>
-      <div class="fields"><label class="f">Caption style<select data-k="style">${opts(S.status.styles, c.style)}</select></label>
+      <div class="fields"><label class="sw span"><input type="checkbox" data-k="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}>Generate captions</label>
+        <label class="f">Caption style<select data-k="style" data-caption-style ${c.captions === false ? "disabled" : ""}>${opts(S.status.styles, c.style)}</select></label>
         <label class="f">Layout<select data-k="layout">${opts(S.status.layouts, c.layout)}</select></label>
+        <label class="f">Game<input data-k="game" value="${esc(c.game || "")}" placeholder="Read from the title"><small class="sub" style="font-weight:400">Left empty, the game is read from the stream's title. Set it for a streamer whose title says nothing: GTA 6, Fortnite, Elden Ring.</small></label>
         <label class="f">Shortest clip (seconds)<input data-k="min_len" type="number" value="${c.min_len}"></label>
         <label class="f">Longest clip (seconds)<input data-k="max_len" type="number" value="${c.max_len}"></label>
         <label class="f">Clips per video<input data-k="max_clips" type="number" value="${c.max_clips}"></label>
@@ -2400,7 +2409,8 @@ function drawClipDlg(full) {
         <label class="f">Big text (hook)<input data-f="hook" id="hookin" value="${esc(c.hook)}" placeholder="2 to 5 words, about this exact clip"></label>
         <div class="row" style="gap:6px;margin-top:-4px"><button class="btn sm" data-act="newhooks">${ic("bolt")}New hook ideas</button><span id="hookopts" class="row" style="gap:6px"></span></div>
         <div class="two"><label class="f">Hook look<select data-f="hook_style">${opts(S.status.hook_styles || {}, c.hook_style || "classic")}</select></label></div>
-        <div class="two"><label class="f">Caption style<select data-f="style">${opts(S.status.styles, c.style)}</select></label>
+        <label class="sw"><input type="checkbox" data-f="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}><span>Generate captions<small>Word-by-word captions burned into the clip</small></span></label>
+        <div class="two"><label class="f">Caption style<select data-f="style" data-caption-style ${c.captions === false ? "disabled" : ""}>${opts(S.status.styles, c.style)}</select></label>
           <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, c.layout)}</select></label></div>
         <div class="two"><label class="f">Start (seconds)<input data-f="start" type="number" step="0.5" value="${c.start}"></label>
           <label class="f">End (seconds)<input data-f="end" type="number" step="0.5" value="${c.end}"></label></div>
@@ -2483,8 +2493,20 @@ $("#file").addEventListener("change", e => { attach(e.target.files); e.target.va
 document.addEventListener("dragover", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.add("over"); } });
 document.addEventListener("dragleave", () => $(".composer")?.classList.remove("over"));
 document.addEventListener("drop", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.remove("over"); attach(e.dataTransfer.files); } });
+function syncCaptionStyle(toggle) {
+  toggle.closest("#addform, #cform, #clipdlg").querySelectorAll("[data-caption-style]").forEach(i => i.disabled = !toggle.checked);
+}
 document.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "o_creator") {
+    const toggle = $("#o_captions"), c = S.creators.find(c => c.id === t.value);
+    if (!toggle.dataset.overridden) { toggle.checked = c?.captions !== false; syncCaptionStyle(toggle); }
+    return;
+  }
+  if (t.hasAttribute("data-caption-toggle")) {
+    if (t.id === "o_captions") t.dataset.overridden = "true";
+    syncCaptionStyle(t);
+  }
   if (t.id === "ai_provider") { $("#ai_models").innerHTML = ""; if (S.ai && t.value !== S.ai.provider) { $("#ai_model").value = ""; $("#ai_base").value = ""; } return aiHints(); }
   if (t.dataset.sel) {
     const k = t.dataset.sel;

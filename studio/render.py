@@ -15,6 +15,7 @@ from .captions import (FONT_FILES, FONT_PATHS, STYLES, _clean, _groups, _key, bg
 from . import captions  # noqa: E402
 
 LAYOUTS = {"track": "Follow the speaker (face tracking)", "split": "Facecam on top, gameplay below",
+           "gameplay": "Gameplay fills the screen, facecam in the corner",
            "blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)"}
 
 
@@ -29,19 +30,40 @@ def geometry(src_w, src_h, layout):
     else:
         fg_h = H
     top = (H - fg_h) // 2
-    if layout == "crop":
-        return layout, fg_h, 300, 1380
+    if layout in ("crop", "gameplay"):
+        return layout, fg_h, 430 if layout == "gameplay" else 300, 1380   # gameplay: under the webcam in the corner
     return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
 
 
-def _filter(layout, fg_h):
-    if layout == "crop":
+PIP_W = 380            # gameplay layout without the smart camera: how wide the webcam is in the 1080-wide frame
+PIP_MARGIN = 26
+
+
+def _filter(layout, fg_h, facecam=None):
+    if layout == "gameplay" and facecam:
+        # The game fills the screen and the webcam sits in its top corner: the play and the face at once.
+        fx, fy, fw, fh = (int(v) for v in facecam)
+        if fw > 8 and fh > 8:
+            pip_h = max(2, int(round(PIP_W * fh / fw)))
+            return (f"[0:v]fps={config.OUT_FPS},split=2[base][fc];"
+                    f"[base]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[b];"
+                    f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={PIP_W}:{pip_h},setsar=1[p];"
+                    f"[b][p]overlay={W - PIP_W - PIP_MARGIN}:{PIP_MARGIN}[v0];")
+    if layout == "crop" or layout == "gameplay":
         return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
     return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
             f"[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,"
             f"scale={W}:{H},eq=brightness=-0.14:saturation=1.15[bg];"
             f"[b]scale={W}:{fg_h}:force_original_aspect_ratio=increase,crop={W}:{fg_h}[fg];"
             f"[bg][fg]overlay=0:(H-h)/2,setsar=1[v0];")
+
+
+def _hook_y(layout, hook_y, facecam=None):
+    """Where the heading goes. In the gameplay layout the webcam sits in the top corner, so a heading
+    across the top would run under it: it goes just below the picture instead."""
+    if layout == "gameplay" and facecam and len(facecam) == 4 and facecam[2] > 8:
+        return PIP_MARGIN + int(round(PIP_W * facecam[3] / facecam[2])) + 32
+    return hook_y
 
 
 _qsv_ok = None
@@ -116,6 +138,14 @@ def tighten(words, start, end, audio=None, cut_fillers=True, min_gap=0.45):
     if dur - sum(b - a for a, b in merged) < 0.4:
         return [(start, end)]
     return merged
+
+
+def caption_file(clip, words_out, dur, hook_y, cap_y, kit=None) -> str:
+    """The subtitle file burned into the clip: the hook always, the word captions only when they are switched on."""
+    return build_ass(words_out if clip.get("captions", True) else [], 0.0, dur, clip.get("hook", ""),
+                     clip.get("style", "bounce"), clip.get("highlight_words", []), hook_y, cap_y,
+                     st=captions.style(clip.get("style", "bounce"), kit),
+                     hook_look=captions.hook_look(clip.get("hook_style") or "classic", kit))
 
 
 def _intersect(segments, keep):
@@ -219,7 +249,7 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
     layout = want
     if smart:
         try:
-            cam = camera.plan_clip(src, segments, want)
+            cam = camera.plan_clip(src, segments, want, facebox=clip.get("facecam"))
             camera.draw(src, segments, cam, work / "base.mp4", zoom_events=punches,
                         cut_zoom=clip.get("transitions", True))
             layout = cam["layout"]
@@ -232,7 +262,7 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
             segments, punches = [(start, end)], []
             words_out, dur = remap(inside, segments), end - start
     if not smart:
-        layout = want if want in ("blur", "zoom", "crop") else "crop"
+        layout = want if want in ("blur", "zoom", "crop", "gameplay") else "crop"
     geo = camera.layout_geometry(layout) if smart else None
     fg_h = None
     if geo:
@@ -240,9 +270,7 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
     else:
         layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, layout)
     st = captions.style(clip.get("style", "bounce"), kit)
-    hook_look = captions.hook_look(clip.get("hook_style") or "classic", kit)
-    ass = build_ass(words_out, 0.0, dur, clip.get("hook", ""), clip.get("style", "bounce"),
-                    clip.get("highlight_words", []), hook_y, cap_y, st=st, hook_look=hook_look)
+    ass = caption_file(clip, words_out, dur, hook_y, cap_y, kit)
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in set(config.FONTS_DIR.glob("*.ttf")) | set((Path(__file__).resolve().parent / "fonts").glob("*.ttf")):
@@ -272,7 +300,7 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
     if smart:
         fc.append(f"[{v_in}:v]scale={W}:{H}:flags=lanczos,setsar=1,fps={config.OUT_FPS}{grade}[v0]")
     else:
-        fc.append(_filter(layout, fg_h).rstrip(";").replace("[0:v]", f"[{v_in}:v]").replace("[v0]", f"{grade}[v0]" if grade else "[v0]"))
+        fc.append(_filter(layout, fg_h, clip.get("facecam")).rstrip(";").replace("[0:v]", f"[{v_in}:v]").replace("[v0]", f"{grade}[v0]" if grade else "[v0]"))
     fc.append("[v0]split=2[vclean][vfx]")
     cur = "vfx"
     broll_used = []

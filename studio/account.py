@@ -38,8 +38,14 @@ def delete_clip(jid: str, cid: str) -> bool:
     for ext in (".ass", ".srt", ".words.srt", ".cues.json", ".json"):     # captions and notes made with the clip
         (d / "clips" / f"{cid}{ext}").unlink(missing_ok=True)
     src = clip.get("src")
-    if src and Path(src).parent == d:              # the piece of video fetched just for this clip
-        Path(src).unlink(missing_ok=True)
+    if src:                                        # the piece of video fetched or recorded just for this clip
+        p = Path(src)
+        try:
+            mine = p.resolve().parent in ((d / "clips").resolve(), d.resolve()) and p.name.startswith(f"{cid}.src")
+        except OSError:
+            mine = False
+        if mine:                                   # never the whole video's own file
+            p.unlink(missing_ok=True)
     ctx.bump()
     return True
 
@@ -153,6 +159,8 @@ def delete_account(uid: str) -> dict:
         accounts._settings_mem.pop(uid, None)
     except Exception:  # noqa: BLE001
         pass
+    from . import posting
+    posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
     usage.forget(uid)
     shutil.rmtree(config.user_dir(uid), ignore_errors=True)
     return {"ok": True}

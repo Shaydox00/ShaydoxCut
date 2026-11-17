@@ -11,6 +11,10 @@ Everything runs on your own computer. It is free: there are no credits, you only
 
 You need Python 3.10 or newer and `ffmpeg` (on Windows: `winget install Gyan.FFmpeg`).
 
+Keep ShaydoxCut in a short folder that stays put, like `C:\shaydoxcut` or `D:\shaydoxcut` on Windows. Not inside a
+temporary folder or an AI assistant's workspace: those get cleaned up, and on Windows a very deep folder can stop
+the speech model from loading (Windows can't open files whose full path is over 260 characters).
+
 ```bash
 pip install -r requirements.txt
 ```

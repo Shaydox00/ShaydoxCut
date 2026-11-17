@@ -370,8 +370,25 @@ def zoom_curve(events, dur, fps):
     return z
 
 
+PIP_W = 380                         # gameplay layout: how wide the webcam picture is, in the 1080-wide frame
+PIP_MARGIN = 26
+
+
+def _box(facebox, W, H):
+    """A webcam box (x, y, w, h in source pixels) if it is usable, else None."""
+    try:
+        x, y, w, h = (int(v) for v in facebox)
+    except (TypeError, ValueError):
+        return None
+    if w < 16 or h < 16 or x < 0 or y < 0 or x + w > W + 2 or y + h > H + 2:
+        return None
+    return x, y, min(w, W - x), min(h, H - y)
+
+
 def layout_geometry(layout: str):
     """Where the hook and the captions sit (in 1080x1920 pixels) for each layout drawn here."""
+    if layout == "gameplay":
+        return 430, 1380                    # the hook sits under the webcam picture in the corner
     if layout == "split":
         top = int(config.OUT_H * SPLIT_TOP)
         return top, top + int((config.OUT_H - top) * 0.62)
@@ -380,14 +397,37 @@ def layout_geometry(layout: str):
     return None
 
 
-def plan_clip(src: Path, segments, layout: str) -> dict:
-    """Looks at the clip and decides what the camera does. Returns the plan and what was found, in words."""
+def plan_clip(src: Path, segments, layout: str, facebox=None) -> dict:
+    """Looks at the clip and decides what the camera does. Returns the plan and what was found, in words.
+    `facebox` is the webcam's box found for the whole video (facecam.py), used by the gameplay layout and when
+    face tracking finds no webcam for the facecam-over-gameplay layout."""
     a = analyse(src, segments)
     W, H = a["size"]
+    box = _box(facebox, W, H)
+    if layout == "gameplay" and not box:
+        cams_ = find_facecams(a)              # the whole-video search found nothing: try the face tracking
+        if cams_:
+            tr = max(cams_, key=lambda t: t["share"])
+            bw = min(W * 0.45, tr["w"] * 5.5)             # a webcam picture is about five face-widths wide
+            bh = bw * 9 / 16
+            bx = min(max(0, tr["cx"] - bw / 2), W - bw)
+            by = min(max(0, tr["cy"] - bh * 0.45), H - bh)
+            box = (int(bx), int(by), int(bw), int(bh))
+    if layout == "gameplay":
+        if box:
+            return {"layout": "gameplay", "size": (W, H), "times": [], "plan": [], "content": None, "cams": [],
+                    "sk": [], "facebox": box, "note": "", "faces": len(a["tracks"])}
+        layout = "track"
+        note0 = "No webcam was found, so the camera follows the speaker instead."
+    else:
+        note0 = ""
     cams = find_facecams(a) if layout == "split" else []
-    note = ""
+    note = note0
     used = layout
-    if layout == "split" and not cams:
+    boxsplit = None
+    if layout == "split" and not cams and box:
+        boxsplit = box                     # face tracking found no webcam, the whole-video search did
+    elif layout == "split" and not cams:
         used, note = "track", "No facecam was found, so the camera follows the speaker instead."
     times = [s["t"] for s in a["samples"]]
     if used == "split":
@@ -398,8 +438,10 @@ def plan_clip(src: Path, segments, layout: str) -> dict:
         plan, content = _speaker_plan(a), None
     if used in ("track", "split") and not any(plan):
         note = note or "No faces were found, so the camera stays in the middle."
+    if boxsplit:
+        content = _speaker_plan(a)
     return {"layout": used, "size": (W, H), "times": times, "plan": plan, "content": content, "cams": cams,
-            "sk": [s_["k"] for s_ in a["samples"]],
+            "sk": [s_["k"] for s_ in a["samples"]], "boxsplit": boxsplit,
             "note": note, "faces": len(a["tracks"])}
 
 
@@ -458,6 +500,33 @@ def draw(src: Path, segments, cam: dict, out: Path, zoom_events=(), fps=None, cu
                     cw, ch = W, W * BASE_H / BASE_W
                 cyy = cy + ch * 0.08 if z > 1.003 else H / 2           # pushed in: keep the face a little above centre
                 img = cv2.resize(_window(frame, cx, cyy, cw, ch), (BASE_W, BASE_H), interpolation=cv2.INTER_LINEAR)
+            elif layout == "gameplay":
+                bx, by, bw, bh = cam["facebox"]
+                img = cv2.resize(_zoomed(_window(frame, W / 2, H / 2, H * BASE_W / BASE_H, H), z, 0.5, 0.5)
+                                 if H * BASE_W / BASE_H <= W else _cover(frame, BASE_W, BASE_H), (BASE_W, BASE_H),
+                                 interpolation=cv2.INTER_LINEAR)
+                pw = int(BASE_W * PIP_W / config.OUT_W)
+                ph = max(2, int(round(pw * bh / bw)))
+                m = int(BASE_W * PIP_MARGIN / config.OUT_W)
+                pip = cv2.resize(frame[by:by + bh, bx:bx + bw], (pw, ph), interpolation=cv2.INTER_AREA)
+                x0 = BASE_W - pw - m
+                cv2.rectangle(img, (x0 - 3, m - 3), (x0 + pw + 2, m + ph + 2), (20, 16, 14), -1)
+                img[m:m + ph, x0:x0 + pw] = pip
+            elif layout == "split" and cam.get("boxsplit"):
+                bx, by, bw, bh = cam["boxsplit"]
+                top = _cover(_zoomed(frame[by:by + bh, bx:bx + bw], z), BASE_W, top_h)
+                bh2 = BASE_H - top_h
+                gw = min(W, H * BASE_W / bh2)
+                gcx = gpath[i][0] if gpath else W / 2
+                # keep the webcam out of the gameplay picture
+                if bx + bw / 2 > W / 2:
+                    gcx = min(gcx, max(gw / 2, bx - gw / 2))
+                else:
+                    gcx = max(gcx, min(W - gw / 2, bx + bw + gw / 2))
+                bottom = cv2.resize(_window(frame, gcx, H / 2, gw, gw * bh2 / BASE_W), (BASE_W, bh2),
+                                    interpolation=cv2.INTER_LINEAR)
+                img = np.vstack([top, bottom])
+                cv2.rectangle(img, (0, top_h - 3), (BASE_W, top_h + 2), (20, 16, 14), -1)
             elif layout == "split":
                 fcx, fcy, fw = path[i]
                 ph = fw * 2.6 / z
