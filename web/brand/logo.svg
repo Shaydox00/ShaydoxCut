@@ -1,0 +1,6 @@
+<svg width="930" height="220" viewBox="0 0 930 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="220" height="220" rx="58" fill="#C8F542"/>
+<path d="M80 54 L172 110 L80 166 Z" fill="#0B0C0E" stroke="#0B0C0E" stroke-width="10" stroke-linejoin="round"/>
+<path d="M50 150 L178 74" stroke="#C8F542" stroke-width="16" stroke-linecap="round"/>
+<text x="252" y="148" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-weight="800" font-size="112" letter-spacing="-4" fill="#0B0C0E">Shaydox<tspan fill="#C8F542">Cut</tspan></text>
+</svg>
