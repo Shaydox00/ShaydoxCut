@@ -11,7 +11,8 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import brain, brand, camera, config, creators, ctx, effects, learn, load, media, render, roman, safe, transcribe, usage
+from . import (brain, brand, camera, config, creators, ctx, effects, learn, load, media, reactions, render, roman, safe,
+               transcribe, usage)
 
 class _FairQueue:
     """Whose video is next. Each person has their own line and the lines take turns, so someone who adds ten
@@ -112,9 +113,9 @@ DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "la
             # ShaydoxCut extras, each on by default and changeable per video and per clip
             "tight": True, "fillers": True, "punch": True, "emoji": True, "sfx": True, "progress": True,
             "brand": True, "vision": True, "enhance": True, "color": False, "transitions": True, "broll": False,
-            "music": "", "cap_lang": "", "hook_style": "classic", "prompt": ""}
+            "coldopen": True, "music": "", "cap_lang": "", "hook_style": "classic", "prompt": ""}
 FLAGS = ("tight", "fillers", "punch", "emoji", "sfx", "progress", "brand", "vision", "enhance", "color",
-         "transitions", "broll")
+         "transitions", "broll", "coldopen")
 FX_KEYS = FLAGS + ("music", "cap_lang", "hook_style")      # copied from the video's options onto each of its clips
 
 
@@ -171,6 +172,7 @@ def public(job) -> dict:
     out = {k: v for k, v in job.items() if k not in HIDDEN}
     out["source"] = {k: v for k, v in job["source"].items() if k != "path"}
     out["clips"] = [{k: v for k, v in c.items() if k not in ("src", "fixed_words", "fixed_for", "_rank")} for c in job["clips"]]
+    out.pop("pool", None)
     ai = job.get("ai") or {}
     out["ai"] = {"tokens": ai.get("tokens", 0), "note": ai.get("note", ""), "used": bool(ai.get("model"))}   # never the model, never raw errors
     if job.get("status") == "queued":
@@ -385,6 +387,21 @@ def request_render(jid, cid, changes: dict):
     _q.put(("clip", jid, cid))
 
 
+def new_hooks(jid, cid) -> list:
+    """Three fresh hooks for one clip, from what is said in it."""
+    job = _jobs[jid]
+    clip = next(c for c in job["clips"] if c["id"] == cid)
+    try:
+        words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        words = []
+    text = " ".join(w["w"] for w in (clip.get("fixed_words") or words) if clip["start"] <= w["s"] < clip["end"])
+    if len(text.split()) < 4:
+        raise ValueError("There aren't enough words in this clip to write a hook from.")
+    usage.set_context(job.get("creator"), job.get("title") or "")
+    return brain.new_hooks(text, job.get("title") or "", clip.get("hook") or "", clip.get("payoff") or "")
+
+
 def render_one(job, clip, words):
     d = Path(job["dir"])
     clip["status"] = "rendering"
@@ -395,6 +412,13 @@ def render_one(job, clip, words):
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
+        if clip.get("keep"):                        # the AI's cuts and teaser, moved onto the piece's own clock
+            local["keep"] = [[a - off, b - off] for a, b in clip["keep"]]
+        if clip.get("cold_open"):
+            local["cold_open"] = [clip["cold_open"][0] - off, clip["cold_open"][1] - off]
+        if abs(clip["start"] - clip.get("found_start", clip["start"])) > 1.5 or \
+                abs(clip["end"] - clip.get("found_end", clip["end"])) > 1.5:
+            local.pop("keep", None), local.pop("cold_open", None)   # re-trimmed by hand: the AI's cuts no longer fit
         target = clip.get("cap_lang") or ""
         span = [round(clip["start"], 2), round(clip["end"], 2), "t:" + target if target else "en2"]   # "en2": always-English
         if clip.get("fixed_for") == span and clip.get("fixed_words") and not any(
@@ -442,6 +466,11 @@ def render_one(job, clip, words):
 
 
 CLIP_MINUTES = float(config.env("SHAYDOX_CLIP_MINUTES", "15"))     # the longest one clip may take to make
+
+
+def ai_problem() -> str:
+    from . import ai
+    return ai.problem.get("text", "")
 
 
 def ai_can_see() -> bool:
@@ -587,6 +616,13 @@ def _run_job(job):
     hi = min(len(audio), int(o["range_end"] * 16000)) if o["range_end"] else len(audio)
     span = (hi - lo) / 16000
     db = media.loudness_per_second(audio[lo:hi])
+    hearing = ThreadPoolExecutor(1, thread_name_prefix="react").submit(reactions.per_second, audio[lo:hi])
+
+    def heard_reactions():
+        try:
+            return hearing.result(timeout=900)
+        except Exception:  # noqa: BLE001 - a bonus signal
+            return {}
 
     vlock, vstate = threading.Lock(), {}
 
@@ -734,30 +770,54 @@ def _run_job(job):
         words += [dict(w, s=round(w["s"] + shift, 2), e=round(w["e"] + shift, 2)) for w in bw]
         (d / "words.json").write_text(json.dumps(words), encoding="utf-8")
         _set(job, stage="Finding the best moments" + where, word_count=len(words))
-        left = int(o["max_clips"]) - len(job["clips"])
-        if left <= 0 or len(bw) < 8:
+        if job["clips"] or len(bw) < 8:          # clips already chosen (a restart after ranking), or nothing said
             job["done_blocks"] = bi + 1
             save(job)
             continue
-        quota = max(1, math.ceil(left / (len(blocks) - bi)))
+        # More candidates than needed: they are compared across the whole video afterwards, so a strong moment in
+        # one part is never pushed out by a weak one picked to fill another part's share.
+        want = int(o["max_clips"])
+        quota = min(20, max(2, math.ceil(want * 1.8 / len(blocks)) + 1))
         s0 = int((a - lo) / 16000)
-        found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
+        n_sec = int((b - a) / 16000) + 1
+        found, ai = brain.find_clips(bw, db[s0: s0 + n_sec], (b - a) / 16000, job["title"],
                                      job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append,
                                      motion=motion_for(a / 16000, b / 16000), memory=memory["text"],
-                                     weights=memory["weights"], wish=o.get("prompt", ""))
+                                     weights=memory["weights"], wish=o.get("prompt", ""),
+                                     react=reactions.slice_(heard_reactions(), s0, s0 + n_sec))
         tokens += ai.get("tokens", 0)
         model = ai.get("model") or model
         if ai.get("note"):
             notes.append(ai["note"])
         for c in found:
-            c["broll_cues"] = c.pop("broll", [])
-            c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
-                     end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"], status="queued", version=0,
-                     **{k: o.get(k, DEFAULTS[k]) for k in FX_KEYS})
-            job["clips"].append(c)
-            futures.append((renders.submit(ctx.bind(make), c, list(words)), c))
+            c.update(start=round(c["start"] + shift, 2), end=round(c["end"] + shift, 2))
+            if c.get("keep"):
+                c["keep"] = [[round(x + shift, 2), round(y + shift, 2)] for x, y in c["keep"]]
+            if c.get("cold_open"):
+                c["cold_open"] = [round(c["cold_open"][0] + shift, 2), round(c["cold_open"][1] + shift, 2)]
+            job.setdefault("pool", []).append(c)
         job["ai"] = {"model": model, "tokens": tokens, "note": "", "log": notes[-5:]}
         job["done_blocks"] = bi + 1       # a restart from here on carries on with the next part
+        save(job)
+    if not job["clips"] and job.get("pool"):
+        pool = job["pool"]
+        _set(job, stage=f"Comparing {len(pool)} moments to pick the best {min(len(pool), int(o['max_clips']))}")
+        best, spent = brain.rank(pool, int(o["max_clips"]), job["title"], notes.append)
+        tokens += spent
+        chosen = []
+        for c in best:                           # best first; a clip mostly covering a better one is dropped
+            if not brain._overlaps(c["start"], c["end"], chosen):
+                chosen.append(c)
+            if len(chosen) >= int(o["max_clips"]):
+                break
+        for c in sorted(chosen, key=lambda c: c["start"]):
+            c["broll_cues"] = c.pop("broll", [])
+            c.update(id=f"clip{len(job['clips']) + 1:02d}", style=o["style"], layout=o["layout"], status="queued",
+                     version=0, found_start=c["start"], found_end=c["end"], **{k: o.get(k, DEFAULTS[k]) for k in FX_KEYS})
+            job["clips"].append(c)
+            futures.append((renders.submit(ctx.bind(make), c, list(words)), c))
+        job.pop("pool", None)
+        job["ai"] = {"model": model, "tokens": tokens, "note": "", "log": notes[-5:]}
         save(job)
     if futures:
         _set(job, stage="Finishing the clips", progress=max(job["progress"], 0.92))
@@ -773,7 +833,9 @@ def _run_job(job):
     del audio
     clips = job["clips"]
     job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:],
-                 "note": "The AI was unavailable, so clips were picked by loudness only." if clips and not model else ""}
+                 "note": ("The AI didn't answer, so clips were picked by loudness and their hooks were taken from what "
+                          "was said. Open a clip and press New hook ideas once the AI is working again."
+                          + (f" ({ai_problem()})" if ai_problem() else "")) if clips and not model else ""}
     stage = "Done" if clips else "Done, but nothing clip-worthy was found"
     _set(job, status="done", stage=stage, progress=1.0, took=round(time.time() - t0))
     try:

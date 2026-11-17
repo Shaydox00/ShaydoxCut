@@ -118,6 +118,17 @@ def tighten(words, start, end, audio=None, cut_fillers=True, min_gap=0.45):
     return merged
 
 
+def _intersect(segments, keep):
+    """The parts of `segments` that are also inside one of the `keep` ranges, in time order."""
+    out = []
+    for a, b in segments:
+        for ka, kb in keep:
+            x, y = max(a, ka), min(b, kb)
+            if y - x >= 0.25:
+                out.append((x, y))
+    return sorted(out)
+
+
 def remap(words, segments):
     """Words moved onto the clip's own timeline after cuts. Words inside a cut part are dropped."""
     out, offset = [], 0.0
@@ -186,6 +197,15 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
             segments = tighten(inside, start, end, clip_audio(src, start, end), cut_fillers=clip.get("fillers", True))
         except Exception as e:  # noqa: BLE001 - the clip is still made, uncut
             notes.append(f"Tight edit skipped: {str(e)[:120]}")
+    teaser = 0.0
+    if smart and clip.get("keep"):                 # the AI's cut: a tangent in the middle is left out
+        kept = _intersect(segments, clip["keep"])
+        if sum(b - a for a, b in kept) >= 5:
+            segments = kept
+    cold = clip.get("cold_open") if clip.get("coldopen", True) else None
+    if smart and cold and start <= cold[0] < cold[1] <= end:
+        segments = [(cold[0], cold[1])] + segments  # the sharpest line plays once first, as a teaser
+        teaser = cold[1] - cold[0]
     words_out = remap(inside, segments)
     dur = sum(b - a for a, b in segments)
     hl_keys = {_key(h) for h in clip.get("highlight_words") or [] if _key(h)}
@@ -244,8 +264,8 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
         v_in = add("-i", "base.mp4")
     else:
         v_in = add("-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src))
-    seek0 = max(0.0, segments[0][0] - 1.0)
-    a_in = add("-ss", f"{seek0:.3f}", "-t", f"{segments[-1][1] - seek0 + 0.5:.3f}", "-i", str(src))
+    seek0 = max(0.0, min(a for a, _b in segments) - 1.0)          # parts may jump back in time (a teaser first)
+    a_in = add("-ss", f"{seek0:.3f}", "-t", f"{max(b for _a, b in segments) - seek0 + 0.5:.3f}", "-i", str(src))
     fc = []
     grade = ",normalize=smoothing=30:independence=0.5:strength=0.55,eq=saturation=1.16:contrast=1.04" \
         if clip.get("color") else ""
@@ -280,6 +300,8 @@ def _render_in(work, src, out_dir, name, clip, inside, src_w, src_h, kit, music)
     sounds = []                                                    # (file, time, volume)
     if clip.get("sfx", True):
         sounds.append((effects.sound("whoosh"), 0.0, 0.32))
+        if teaser:                                 # out of the teaser and into the story
+            sounds.append((effects.sound("whoosh"), max(0.0, teaser - 0.25), 0.4))
         for a, _b in punches:
             sounds.append((effects.sound("thump"), max(0.0, a - 0.02), 0.45))
     if clip.get("emoji", True):

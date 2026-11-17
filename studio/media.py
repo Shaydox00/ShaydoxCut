@@ -137,9 +137,17 @@ def youtube_words(url: str):
     with _youtube_guard(url), _ydl({}) as ydl:
         i = ydl.extract_info(url, download=False)
         auto = i.get("automatic_captions") or {}
-        key = next((k for k in auto if k.endswith("-orig")), None)
-        if not key and i.get("language") in auto:
-            key = i["language"]
+        # A video with dubbed audio tracks has an "-orig" transcript for every dub. Only the one in the video's own
+        # language is right; taking the first found once gave a dubbed Arabic transcript for an English video.
+        lang = (i.get("language") or "").split("-")[0].lower()
+        origs = [k for k in auto if k.endswith("-orig")]
+        key = next((k for k in origs if lang and k.split("-")[0].lower() == lang), None)
+        if not key and len(origs) == 1:
+            key = origs[0]
+        if not key and lang and lang in auto and not origs:
+            key = lang
+        if not key:                          # unsure which language was spoken: our own model writes the transcript
+            return None
         track = next((f for f in auto.get(key) or [] if f.get("ext") == "json3" and f.get("url")), None) if key else None
         if not track:
             return None

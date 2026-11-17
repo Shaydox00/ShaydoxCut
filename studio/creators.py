@@ -17,6 +17,7 @@ _lock = threading.RLock()
 DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "track", "min_len": 15, "max_len": 60,
             "tight": True, "fillers": True, "punch": True, "emoji": True, "sfx": True, "progress": True,
             "brand": True, "vision": True, "enhance": True, "color": False, "transitions": True, "broll": False,
+            "coldopen": True,
             "music": "", "cap_lang": "", "hook_style": "classic",
             "max_clips": 6, "min_score": 80, "auto_watch": False, "buffer_min": 20, "live_per_hour": 4, "ai_every_min": 3, "ai_only_on_spike": True, "auto_jump_pct": 60,
             "plan": "free", "decide_mode": "both", "must_clip_min": 0, "min_gap_min": 2,
@@ -63,7 +64,7 @@ def _clean(data: dict) -> dict:
             lo, hi = NUMERIC[k]
             v = max(lo, min(hi, int(float(v))))
         elif k in ("auto_watch", "autopost", "ai_only_on_spike", "tight", "fillers", "punch", "emoji", "sfx",
-                   "progress", "brand", "vision", "enhance", "color", "transitions", "broll"):
+                   "progress", "brand", "vision", "enhance", "color", "transitions", "broll", "coldopen"):
             v = bool(v)
         elif k in ("music", "cap_lang", "hook_style"):
             v = str(v or "").strip()[:120]

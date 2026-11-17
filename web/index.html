@@ -869,6 +869,9 @@ body{background:var(--frame)}
 .quick{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:760px;margin:20px auto 0}
 .qchip{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:999px;border:1px solid var(--line-2);background:transparent;color:var(--text);font-weight:500;font-size:13px;cursor:pointer}
 .qchip svg{width:16px;height:16px;color:var(--dim)}
+.qchip.on{border-color:var(--brand);color:var(--strong)}
+.payoff{font-size:13px;color:var(--text);background:var(--raise);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px}
+.payoff b{color:var(--brand);font-weight:600}
 .qchip:hover{background:var(--raise);color:var(--strong)}
 .composer-opts>.og{display:flex;flex-direction:column;gap:10px;padding:0 12px}
 .opt-sec{background:var(--muted);border:1px solid var(--line);border-radius:16px;padding:16px;transition:border-color .3s ease}
@@ -1520,6 +1523,7 @@ const FX = [
   ["broll", "Auto B-roll", "Stock video over what is described (needs a free Pexels key)", "look", "video"],
   ["progress", "Progress bar", "A slim bar that fills as the clip plays", "look", "chart"],
   ["brand", "Brand logo", "Your logo from the brand kit", "look", "crown"],
+  ["coldopen", "Cold open", "The sharpest line plays first as a teaser, when the AI finds one", "look", "play"],
   ["vision", "AI watches the video", "Scores and titles what happens on screen too", "ai", "eye"]];
 const QUICK = [["sec-captions", "Captions", "chat"], ["sec-hook", "Hook", "bolt"], ["sec-layout", "Reframe", "video"],
   ["sec-sound", "Speech cleanup", "scissors"], ["sec-look", "Auto B-roll", "film"], ["sec-captions", "Translate", "link"],
@@ -2391,8 +2395,10 @@ function drawClipDlg(full) {
         <div class="row" style="gap:8px;align-items:center"><span class="sub">Teach ShaydoxCut:</span>${rateBtns(j, c)}
           ${c.cut_seconds ? `<span class="sub">· ${c.cut_seconds} s of dead air cut</span>` : ""}${c.camera?.facecam ? `<span class="sub">· facecam found</span>` : ""}</div>
         ${c.render_note ? `<p class="sub">${esc(c.render_note)}</p>` : ""}
+        ${c.payoff ? `<p class="payoff"><b>Why it works:</b> ${esc(c.payoff)}</p>` : ""}
         <h3>On the video</h3>
-        <label class="f">Big text<input data-f="hook" value="${esc(c.hook)}"></label>
+        <label class="f">Big text (hook)<input data-f="hook" id="hookin" value="${esc(c.hook)}" placeholder="2 to 5 words, about this exact clip"></label>
+        <div class="row" style="gap:6px;margin-top:-4px"><button class="btn sm" data-act="newhooks">${ic("bolt")}New hook ideas</button><span id="hookopts" class="row" style="gap:6px"></span></div>
         <div class="two"><label class="f">Hook look<select data-f="hook_style">${opts(S.status.hook_styles || {}, c.hook_style || "classic")}</select></label></div>
         <div class="two"><label class="f">Caption style<select data-f="style">${opts(S.status.styles, c.style)}</select></label>
           <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, c.layout)}</select></label></div>
@@ -2558,6 +2564,15 @@ document.addEventListener("click", async e => {
       return toast(r === 1 ? "Noted: more clips like this" : r === -1 ? "Noted: fewer clips like this" : "Rating removed", "ok");
     }
     if (a === "sortbest") { S.best = !S.best; return render(); }
+    if (a === "newhooks") {
+      const box = $("#hookopts"); box.innerHTML = `<span class="sub">Writing hooks…</span>`;
+      try {
+        const r = await api(`/api/jobs/${D.jid}/clips/${encodeURIComponent(D.cid)}/hooks`, {method:"POST"});
+        box.innerHTML = r.hooks.map(h => `<button type="button" class="qchip" data-act="usehook" data-h="${esc(h)}">${esc(h)}</button>`).join("");
+      } catch (err) { box.innerHTML = ""; toast(err.message, "bad"); }
+      b.disabled = false; return;
+    }
+    if (a === "usehook") { $("#hookin").value = d.h; $$("#hookopts .qchip").forEach(x => x.classList.toggle("on", x === b)); return toast("Hook set. Press Save and re-make clip to use it.", "ok"); }
     if (a === "kitpick") {
       const f = $("#kitfile"); if (!f) return;
       f.accept = d.what === "logo" ? "image/png,image/jpeg,image/webp" : d.what === "font" ? ".ttf,.otf" : "audio/*,.mp3,.m4a,.wav,.ogg,.aac,.flac";

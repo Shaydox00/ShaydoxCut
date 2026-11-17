@@ -202,3 +202,54 @@ check("new options are checked", o["hook_style"] == "banner" and len(o["prompt"]
 if fails:
     print("FAILED:", len(fails)); sys.exit(1)
 print("ALL PASSED (looks)")
+
+# ---- picking the best moments (ideas from careful editors): hooks, ranking, cuts, teasers
+W2 = lambda t, s0=0.0: [{"w": w, "s": s0 + i * 0.4, "e": s0 + i * 0.4 + 0.3} for i, w in enumerate(t.split())]
+said = W2("So yeah we went out. The yacht just sank in ten seconds! That cost 1.7 million dollars?")
+check("a hook is taken from what is said when there is no AI", brain.smart_hook(said) == "THAT COST 1.7 MILLION DOLLARS?", brain.smart_hook(said))
+check("generic hooks are recognised", brain.is_generic("WAIT FOR IT") and brain.is_generic("Watch this!") and not brain.is_generic("HE SANK A YACHT"))
+t = brain._tidy({"hook": "WAIT FOR IT", "score": 70, "payoff": "You see a yacht sink.", "needs": "nothing"}, 0, 12, said, 5)
+check("a generic hook from the AI is replaced by what is said", t["hook"] == "THAT COST 1.7 MILLION DOLLARS?", t["hook"])
+words3 = W2("Who won the race last year? That was me, I won it by a mile and nobody believed it.", 10)
+lines3 = brain.make_lines(words3)
+s_, e_ = brain._snap({"start": words3[6]["s"], "end": words3[-1]["e"]}, lines3, words3, 3, 30, 60)
+check("a clip never opens on a word that points back", s_ <= words3[0]["s"], (s_, words3[6]["w"]))
+long_words = W2(" ".join(["word"] * 80))
+c = {"keep": [{"start": 0, "end": 10}, {"start": 16, "end": 30}], "cold_open": {"start": 20, "end": 23}}
+k = brain._ranges(c, 0, 31, long_words, 10)
+check("the AI's keep ranges are kept when they cut something out", k and len(k) == 2 and k[0][0] >= 0 and k[1][1] <= 31, k)
+check("keep ranges that cut nothing are ignored", brain._ranges({"keep": [{"start": 0, "end": 31}]}, 0, 31, long_words, 10) is None)
+check("a teaser inside the clip is kept", brain._cold(c, 0, 31, long_words) is not None)
+check("a teaser at the very start is pointless and dropped", brain._cold({"cold_open": {"start": 0.5, "end": 3}}, 0, 31, long_words) is None)
+cands = [{"title": f"c{i}", "hook": f"HOOK {i}", "start": i * 40, "end": i * 40 + 30, "score": 60 + i, "category": "funny",
+          "payoff": "p", "reason": "r"} for i in range(6)]
+real_ask = brain.ask_ai
+brain.ask_ai = lambda prompt, schema=None, purpose="", **k: ({"ranked": [{"id": 1, "why": "x"}, {"id": 4, "why": "y"}, {"id": 0, "why": "z"}]}, "m", 9)
+real_ready = brain.config.ai_ready
+brain.config.ai_ready = lambda: True
+best, spent = brain.rank(cands, 3, "t")
+check("the ranking pass decides the order across the whole video", [c["title"] for c in best[:3]] == ["c1", "c4", "c0"] and len(best) == 6, [c["title"] for c in best])
+brain.ask_ai = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down"))
+best, _s = brain.rank(cands, 3, "t", log=lambda m: None)
+check("without the AI the scores decide", best[0]["title"] == "c5")
+brain.ask_ai = lambda prompt, schema=None, purpose="", **k: (["HE SANK THE YACHT", "WAIT FOR IT", "$1.7M GONE IN SECONDS"], "m", 5)
+hooks = brain.new_hooks("we sank the yacht in ten seconds and it cost 1.7 million", "t")
+check("new hook ideas drop generic ones", hooks == ["HE SANK THE YACHT", "$1.7M GONE IN SECONDS"], hooks)
+brain.ask_ai, brain.config.ai_ready = real_ask, real_ready
+from studio import reactions
+lines4 = brain._add_reactions([{"s": 5.0, "e": 7.0, "text": "that was hilarious", "loud": False}], {"laughter": [0] * 6 + [0.6, 0.7, 0] , "cheering": [0] * 9, "screaming": [0] * 9})
+check("a heard laugh is marked for the AI", lines4[0].get("react") == "LAUGH" and "(LAUGH)" in brain._fmt(lines4))
+check("the laughter detector reports its own state", isinstance(reactions.available(), bool))
+check("the AI is told how to cut tight and stand alone", all(x in brain.RULES for x in ("payoff", "needs", "keep", "cold_open", "NEVER generic")))
+from studio import render as _r
+check("keep ranges intersect the silence cuts", _r._intersect([(0, 5), (6, 20)], [[2, 8], [15, 30]]) == [(2, 5), (6, 8), (15, 20)])
+if fails:
+    print("FAILED:", len(fails)); sys.exit(1)
+print("ALL PASSED (picking)")
+
+# ---- clips aim for a full story, and a short one loses points
+check("the AI is told a target length", "AIM FOR 36 TO 60" in brain.RULES.format(min_len=15, max_len=60, transcript="", emoji_set="", target_lo=brain._target_lo(15, 60)))
+check("the target never falls below the minimum", brain._target_lo(40, 50) == 40 and brain._target_lo(15, 60) == 36)
+if fails:
+    print("FAILED:", len(fails)); sys.exit(1)
+print("ALL PASSED (length)")

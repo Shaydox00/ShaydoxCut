@@ -950,6 +950,24 @@ def rerender(jid: str, cid: str, body: dict = Body(...)):
     return jobs.public(job)
 
 
+@app.post("/api/jobs/{jid}/clips/{cid}/hooks")
+def clip_hooks(jid: str, cid: str):
+    """Three fresh hook ideas for one clip, written by the AI from what is said in it."""
+    job = _job_or_404(jid)
+    if not any(c["id"] == cid for c in job["clips"]):
+        raise HTTPException(404, "No such clip")
+    _throttle("hooks:" + ctx.uid(), 30, 600, "That's a lot of hook ideas in a short time. Wait a few minutes.")
+    try:
+        hooks = jobs.new_hooks(jid, cid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, str(e).replace("The AI did not answer: ", "") or "The AI didn't answer.")
+    if not hooks:
+        raise HTTPException(503, "The AI didn't come up with usable hooks. Try again.")
+    return {"hooks": hooks}
+
+
 @app.post("/api/jobs/{jid}/clips/{cid}/rating")
 def rate_clip(jid: str, cid: str, body: dict = Body(...)):
     """Thumbs up (1), thumbs down (-1) or neither (0). ShaydoxCut learns what you like from these."""

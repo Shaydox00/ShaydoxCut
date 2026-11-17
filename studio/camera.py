@@ -104,7 +104,8 @@ def find_faces(img) -> list:
 
 # ---------------------------------------------------------------- reading the clip
 def _frames(src: Path, segments):
-    """Every frame inside the kept parts of the clip, in order: yields (time in the source, BGR frame)."""
+    """Every frame inside the kept parts of the clip, in the order they play: yields (which part, time in the
+    source, BGR frame). Parts may jump back in time (a cold open teaser plays a later line first)."""
     cap = cv2.VideoCapture(str(src))
     if not cap.isOpened():
         raise RuntimeError("The video file couldn't be opened for the smart camera.")
@@ -112,7 +113,7 @@ def _frames(src: Path, segments):
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         if not 5 <= fps <= 240:
             fps = 30.0
-        for a, b in segments:
+        for k, (a, b) in enumerate(segments):
             cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, a - 0.05) * 1000)
             while True:
                 ok, frame = cap.read()
@@ -123,7 +124,7 @@ def _frames(src: Path, segments):
                     continue
                 if t >= b:
                     break
-                yield t, frame
+                yield k, t, frame
     finally:
         cap.release()
 
@@ -143,7 +144,10 @@ def analyse(src: Path, segments, want_motion=False) -> dict:
     size, and (if asked) how much the picture moves per sample, for spotting action."""
     samples, prev_gray, nxt = [], None, None
     size = None
-    for t, frame in _frames(src, segments):
+    seg_now = None
+    for k, t, frame in _frames(src, segments):
+        if k != seg_now:                       # a new part: sample it from its own start
+            seg_now, nxt, prev_gray = k, None, None
         if nxt is not None and t < nxt:
             continue
         nxt = t + SAMPLE_EVERY
@@ -168,7 +172,7 @@ def analyse(src: Path, segments, want_motion=False) -> dict:
         motion = 0.0
         if want_motion and prev_gray is not None:
             motion = float(np.mean(cv2.absdiff(cv2.resize(gray, (64, 36)), cv2.resize(prev_gray, (64, 36)))))
-        samples.append({"t": t, "faces": faces, "motion": motion})
+        samples.append({"t": t, "faces": faces, "motion": motion, "k": k})
         prev_gray = gray
     if size is None:
         raise RuntimeError("No pictures could be read from this part of the video.")
@@ -395,6 +399,7 @@ def plan_clip(src: Path, segments, layout: str) -> dict:
     if used in ("track", "split") and not any(plan):
         note = note or "No faces were found, so the camera stays in the middle."
     return {"layout": used, "size": (W, H), "times": times, "plan": plan, "content": content, "cams": cams,
+            "sk": [s_["k"] for s_ in a["samples"]],
             "note": note, "faces": len(a["tracks"])}
 
 
@@ -407,17 +412,22 @@ def draw(src: Path, segments, cam: dict, out: Path, zoom_events=(), fps=None, cu
         fps = fps / 2                      # 60 fps sources are drawn at 30: half the work, and Shorts play at 30 anyway
     dur = sum(b - a for a, b in segments)
     zc = zoom_curve(zoom_events, dur + 1.0, fps)
-    frame_times = []
-    for a, b in segments:                                           # the time of each frame we will see, in order
-        t = a
-        while t < b:
-            frame_times.append(t)
-            t += 1 / fps
     layout = cam["layout"]
     default = (W / 2, H * 0.42, H * 0.2, -1)
-    path = _follow(cam["times"], cam["plan"], frame_times, BASE_W, default) if layout in ("track", "split", "zoom") else None
-    gpath = _follow(cam["times"], cam["content"], frame_times, BASE_W, (W / 2, H / 2, H * 0.2, -1)) \
-        if layout == "split" and cam.get("content") else None
+    sk = cam.get("sk") or [0] * len(cam["times"])
+    parts = {}                                    # each kept part gets its own camera path (parts may jump in time)
+    for k, (a, b) in enumerate(segments):
+        ft, t = [], a
+        while t < b:
+            ft.append(t)
+            t += 1 / fps
+        idx = [i for i, x in enumerate(sk) if x == k]
+        times_k = [cam["times"][i] for i in idx]
+        pk = _follow(times_k, [cam["plan"][i] for i in idx], ft, BASE_W, default) \
+            if layout in ("track", "split", "zoom") else None
+        gk = _follow(times_k, [cam["content"][i] for i in idx], ft, BASE_W, (W / 2, H / 2, H * 0.2, -1)) \
+            if layout == "split" and cam.get("content") else None
+        parts[k] = (ft, pk, gk)
     proc = subprocess.Popen(
         ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{BASE_W}x{BASE_H}",
          "-r", f"{fps:.4f}", "-i", "-", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "15",
@@ -427,8 +437,8 @@ def draw(src: Path, segments, cam: dict, out: Path, zoom_events=(), fps=None, cu
     top_h = int(BASE_H * SPLIT_TOP)
     try:
         due, seg_of = None, None
-        for t, frame in _frames(src, segments):
-            seg = next((k for k, (a, b) in enumerate(segments) if a - 0.05 <= t < b), seg_of)
+        for seg, t, frame in _frames(src, segments):
+            frame_times, path, gpath = parts[seg]
             if seg != seg_of:
                 seg_of, due = seg, t
             if t < due - 0.3 / fps:

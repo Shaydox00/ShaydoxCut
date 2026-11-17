@@ -190,6 +190,9 @@ def explain(e) -> str:
         return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
     if "401" in text or "403" in text or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
         return f"{label()} refused the key. Paste a working key under Settings, AI."
+    if "503" in text or "529" in text or "high demand" in low or "overloaded" in low or "unavailable" in low:
+        return (f"{label()} is overloaded right now (too many people using it). Try again in a few minutes, or add a "
+                "second model after a comma in Settings, AI, so ShaydoxCut can switch to it.")
     if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
         return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
     if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low:
@@ -257,12 +260,12 @@ def can_see() -> bool:
 _no_vision: dict = {}
 
 
-def call(model: str, prompt: str, schema: dict, images=None):
+def call(model: str, prompt: str, schema: dict, images=None, timeout=None):
     """Ask one model. Returns (the parsed JSON answer, tokens sent, tokens written back).
     `images` is an optional list of JPEG pictures (bytes) for the AI to look at with the words."""
     how = PROVIDERS[provider()][2]
     try:
-        return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, images or [])
+        return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, images or [], timeout)
     except AIError as e:
         if images and ("image" in str(e).lower() or "vision" in str(e).lower() or "multimodal" in str(e).lower()):
             _no_vision[provider()] = True
@@ -274,11 +277,11 @@ def _b64(img: bytes) -> str:
     return base64.b64encode(img).decode()
 
 
-def _gemini(model, prompt, schema, images):
+def _gemini(model, prompt, schema, images, timeout=None):
     parts = [{"inline_data": {"mime_type": "image/jpeg", "data": _b64(i)}} for i in images] + [{"text": prompt}]
     body = {"contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "responseSchema": schema}}
-    r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=180)
+    r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=timeout or 180)
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
@@ -288,7 +291,7 @@ def _gemini(model, prompt, schema, images):
     return _parse(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
 
 
-def _openai(model, prompt, schema, images):
+def _openai(model, prompt, schema, images, timeout=None):
     headers = {"Authorization": f"Bearer {key()}"} if key() else {}
     text = _wrapped(prompt, schema)
     content = text if not images else (
@@ -299,7 +302,7 @@ def _openai(model, prompt, schema, images):
     extras = [{"temperature": 0.4, "response_format": {"type": "json_object"}}, {"response_format": {"type": "json_object"}}, {}]
     r = None
     for extra in extras:
-        r = httpx.post(f"{base_url()}/chat/completions", json={**body, **extra}, headers=headers, timeout=180)
+        r = httpx.post(f"{base_url()}/chat/completions", json={**body, **extra}, headers=headers, timeout=timeout or 180)
         if r.status_code not in (400, 422):
             break
     if r.status_code != 200:
@@ -312,7 +315,7 @@ def _openai(model, prompt, schema, images):
 _effort_ok: dict = {}      # model -> False once it refused the effort setting (older Claude models)
 
 
-def _anthropic(model, prompt, schema, images):
+def _anthropic(model, prompt, schema, images, timeout=None):
     content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _b64(i)}} for i in images]
     content.append({"type": "text", "text": _wrapped(prompt, schema)})
     body = {"model": model, "max_tokens": 16000, "messages": [{"role": "user", "content": content}]}
@@ -321,11 +324,11 @@ def _anthropic(model, prompt, schema, images):
     if _effort_ok.get(model) is not False:
         body["output_config"] = {"effort": "low"}
     headers = {"x-api-key": key(), "anthropic-version": "2023-06-01"}
-    r = httpx.post(f"{base_url()}/messages", json=body, timeout=300, headers=headers)
+    r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 300, headers=headers)
     if r.status_code == 400 and "output_config" in body and ("effort" in r.text or "output_config" in r.text):
         _effort_ok[model] = False
         body.pop("output_config")
-        r = httpx.post(f"{base_url()}/messages", json=body, timeout=300, headers=headers)
+        r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 300, headers=headers)
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
