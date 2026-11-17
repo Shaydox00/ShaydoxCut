@@ -2,7 +2,7 @@
 Google, Apache 2.0 licence), run on this computer.
 
 A laugh is the clearest sign that something funny just happened, in any language, so these moments are marked
-for the AI and give a small boost to the clips that hold them. Without the model (data/models/yamnet.onnx) or
+for the AI and give a small boost to the clips that hold them. Without the model (models/yamnet.onnx, shipped with ShaydoxCut) or
 the onnxruntime package, this quietly does nothing and loudness alone is used, as before.
 """
 import csv
@@ -12,8 +12,10 @@ import numpy as np
 
 from . import config
 
-MODEL = config.MODELS_DIR / "yamnet.onnx"
-CLASSES = config.MODELS_DIR / "yamnet_class_map.csv"
+_SHIPPED = config.ROOT / "models"            # comes with ShaydoxCut; a copy in the data folder wins
+MODEL = next((d / "yamnet.onnx" for d in (config.MODELS_DIR, _SHIPPED) if (d / "yamnet.onnx").is_file()),
+             _SHIPPED / "yamnet.onnx")
+CLASSES = MODEL.with_name("yamnet_class_map.csv")
 CHANNELS = ("laughter", "cheering", "screaming")
 THRESHOLD = 0.15            # a chuckle is about 0.25, a hearty laugh higher; the background sits near 0
 

@@ -1,0 +1,13 @@
+{
+  "name": "shaydoxcut",
+  "owner": {
+    "name": "Shaydox00"
+  },
+  "plugins": [
+    {
+      "name": "shaydoxcut",
+      "source": "./",
+      "description": "Installs, starts and updates ShaydoxCut, the AI clipping studio for Shorts, TikTok and Reels."
+    }
+  ]
+}

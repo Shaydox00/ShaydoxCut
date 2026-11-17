@@ -7,7 +7,23 @@ and your logo. Post it straight to YouTube, Instagram or TikTok, or export a kit
 Everything runs on your own computer. It is free: there are no credits, you only pay your AI service for what you use
 (Gemini's API has a free tier).
 
-## Start it
+## Install it with Claude Code (easiest)
+
+In Claude Code, run these two commands once:
+
+```
+/plugin marketplace add Shaydox00/ShaydoxCut
+```
+
+```
+/plugin install shaydoxcut@shaydoxcut
+```
+
+Then just ask Claude: **"install ShaydoxCut"**. It asks where to put it, checks Python and ffmpeg (and offers to install
+them), downloads ShaydoxCut, sets it up and starts it. Later, "start ShaydoxCut" or "update ShaydoxCut" works the same
+way. If the repository is private, the owner has to invite you on GitHub first.
+
+## Install it by hand
 
 You need Python 3.10 or newer and `ffmpeg` (on Windows: `winget install Gyan.FFmpeg`).
 
@@ -16,14 +32,28 @@ temporary folder or an AI assistant's workspace: those get cleaned up, and on Wi
 the speech model from loading (Windows can't open files whose full path is over 260 characters).
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Shaydox00/ShaydoxCut C:\shaydoxcut
 ```
 
 ```bash
-python -m studio.server
+cd C:\shaydoxcut
 ```
 
-Then open http://127.0.0.1:8766 (the port is set in `.env`). The first start downloads the speech model (about
+```bash
+python -m venv .venv
+```
+
+```bash
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+```bash
+.venv\Scripts\python -m studio.server
+```
+
+On a Mac or Linux, use `~/shaydoxcut` as the folder and `.venv/bin/python` instead of `.venv\Scripts\python`.
+
+Then open http://127.0.0.1:8765 (put `SHAYDOX_PORT=8766` in `.env` to use another port). The first start downloads the speech model (about
 480 MB, once) and a small face finder (once).
 
 ## What it does

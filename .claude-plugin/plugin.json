@@ -1,0 +1,12 @@
+{
+  "name": "shaydoxcut",
+  "description": "Installs, starts and updates ShaydoxCut: an AI clipping studio that turns long videos and live streams into finished vertical Shorts on your own computer.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Shaydox00"
+  },
+  "homepage": "https://github.com/Shaydox00/ShaydoxCut",
+  "repository": "https://github.com/Shaydox00/ShaydoxCut",
+  "license": "MIT",
+  "keywords": ["video", "clips", "shorts", "tiktok", "reels", "captions", "streaming"]
+}
